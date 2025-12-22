@@ -32,8 +32,8 @@ jobs:
         IG_API_KEY: ${{ secrets.IG_API_KEY }}
         TWILIO_ACCOUNT_SID: ${{ secrets.TWILIO_ACCOUNT_SID }}
         TWILIO_AUTH_TOKEN: ${{ secrets.TWILIO_AUTH_TOKEN }}
-        TWILIO_WHATSAPP_FROM: ${{ secrets.TWILIO_WHATSAPP_FROM }}
-        TWILIO_WHATSAPP_TO: ${{ secrets.TWILIO_WHATSAPP_TO }}
+        TWILIO_FROM: ${{ secrets.TWILIO_WHATSAPP_FROM }}
+        TWILIO_TO: ${{ secrets.TWILIO_WHATSAPP_TO }}
       run: |
         python US100_weekly_breakout/daily_runner.py
 
