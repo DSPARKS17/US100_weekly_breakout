@@ -1,0 +1,4 @@
+pandas
+trading_ig
+twilio
+python-dotenv
