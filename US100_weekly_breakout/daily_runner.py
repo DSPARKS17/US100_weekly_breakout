@@ -17,8 +17,8 @@ def main():
             "IG_API_KEY",
             "TWILIO_ACCOUNT_SID",
             "TWILIO_AUTH_TOKEN",
-            "TWILIO_WHATSAPP_FROM",
-            "TWILIO_WHATSAPP_TO"
+            "TWILIO_FROM",
+            "TWILIO_TO"
         ]
         for s in secrets_list:
             value = os.getenv(s)
