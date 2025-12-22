@@ -1,30 +1,30 @@
 import os
-import smtplib
-from email.mime.text import MIMEText
-from email.mime.multipart import MIMEMultipart
+from twilio.rest import Client
+from logger import log_info, log_error
 
-# Load from environment variables (set them in your OS or .env file)
-SMTP_SERVER = "smtp.gmail.com"
-SMTP_PORT = 587
-SENDER_EMAIL = os.getenv("EMAIL_ADDRESS")
-APP_PASSWORD = os.getenv("EMAIL_APP_PASSWORD")
-
-def send_email(subject, body, recipient=None):
-    if not recipient:
-        recipient = SENDER_EMAIL  # Default: send to self
-
-    msg = MIMEMultipart()
-    msg['From'] = SENDER_EMAIL
-    msg['To'] = recipient
-    msg['Subject'] = subject
-    msg.attach(MIMEText(body, 'plain'))
-
+def send_whatsapp_message(message: str):
+    """
+    Send a WhatsApp message via Twilio.
+    """
     try:
-        server = smtplib.SMTP(SMTP_SERVER, SMTP_PORT)
-        server.starttls()
-        server.login(SENDER_EMAIL, APP_PASSWORD)
-        server.sendmail(SENDER_EMAIL, recipient, msg.as_string())
-        server.quit()
-        print(f"📧 Email sent: {subject}")
+        account_sid = os.getenv("TWILIO_ACCOUNT_SID")
+        auth_token = os.getenv("TWILIO_AUTH_TOKEN")
+        from_number = os.getenv("TWILIO_FROM")
+        to_number = os.getenv("TWILIO_TO")
+
+        if not all([account_sid, auth_token, from_number, to_number]):
+            raise ValueError("Missing Twilio environment variables")
+
+        client = Client(account_sid, auth_token)
+
+        msg = client.messages.create(
+            body=message,
+            from_=from_number,
+            to=to_number
+        )
+
+        log_info(f"WhatsApp message sent. SID: {msg.sid}")
+
     except Exception as e:
-        print(f"❌ Failed to send email: {e}")
+        log_error(f"Failed to send WhatsApp message: {e}")
+

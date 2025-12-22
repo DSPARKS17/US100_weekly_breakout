@@ -9,11 +9,9 @@ os.makedirs(LOG_DIR, exist_ok=True)
 # Log file path
 LOG_FILE = os.path.join(LOG_DIR, f"{config.SYMBOL}_trading.log")
 
-# ---------------------------
 # Logger Configuration
-# ---------------------------
 logger = logging.getLogger(config.SYMBOL)
-logger.setLevel(logging.DEBUG)  # Capture all levels
+logger.setLevel(logging.DEBUG)
 
 # Console handler
 console_handler = logging.StreamHandler()
@@ -31,9 +29,7 @@ file_handler.setFormatter(file_formatter)
 logger.addHandler(console_handler)
 logger.addHandler(file_handler)
 
-# ---------------------------
 # Helper functions
-# ---------------------------
 def log_info(message):
     logger.info(message)
 

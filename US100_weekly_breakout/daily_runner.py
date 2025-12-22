@@ -1,75 +1,45 @@
+# daily_runner.py
 from datetime import datetime
-import pandas as pd
-
-# Custom modules
 import config
-from data_loader import load_data
-from indicators import compute_ema
-from trade_logic import should_open_trade, should_close_trade
-from trade_state import load_state, save_state, open_position, close_position
-from notification import send_email
-from logger import log_info, log_debug, log_warning, log_error
-from visualization import plot_trades, plot_cumulative_pnl
+from ig_data_loader import IGDataLoader
+from notification import send_whatsapp_message
+from logger import log_info, log_error
 
 def main():
     try:
-        # ---------------------------
-        # Load Data
-        # ---------------------------
-        weekly_df, daily_df, _ = load_data(config.SYMBOL)
+        # Initialize IGDataLoader
+        loader = IGDataLoader()
+        daily_df = loader.fetch_latest_prices(numpoints=2)  # fetch last 2 days
         log_info("Data loaded successfully.")
 
-        # ---------------------------
-        # Compute EMAs
-        # ---------------------------
-        for period in [config.EMA_SHORT, config.EMA_MEDIUM, config.EMA_LONG]:
-            daily_df[f'EMA{period}'] = compute_ema(daily_df['close'], period)
-            weekly_df[f'EMA{period}'] = compute_ema(weekly_df['close'], period)
-        log_debug("EMAs computed.")
+        # Take the previous completed day
+        last_day = daily_df.iloc[-2]
 
-        # ---------------------------
-        # Load Trade State
-        # ---------------------------
-        state = load_state()
-        log_info(f"Current position: {state.get('position')}")
+        # Convert to floats explicitly
+        open_price  = float(last_day['open'])
+        high_price  = float(last_day['high'])
+        low_price   = float(last_day['low'])
+        close_price = float(last_day['close'])
 
-        # ---------------------------
-        # Trading Logic
-        # ---------------------------
-        today = daily_df.index[-1]
-        price = daily_df['close'].iloc[-1]
+        # Build message
+        message = (
+            f"📊 {config.SYMBOL} Daily Summary ({datetime.now().strftime('%Y-%m-%d')})\n"
+            f"Open : {open_price:.1f}\n"
+            f"High : {high_price:.1f}\n"
+            f"Low  : {low_price:.1f}\n"
+            f"Close: {close_price:.1f}"
+        )
 
-        # Check if we should open a new trade
-        if should_open_trade(weekly_df, daily_df, today):
-            # Compute size & stop
-            size = config.ACCOUNT_VALUE / price  # Simple example
-            stop = daily_df[f'EMA{config.EMA_LONG}'].iloc[-1] * 0.99  # Just under EMA100
-            open_position(state, today.strftime('%Y-%m-%d'), price, size, stop)
-            log_info(f"Trade opened at {price} with size {size} and stop {stop}")
-            send_email("📈 Trade Opened", f"Date: {today}\nPrice: {price}\nSize: {size}\nStop: {stop}")
-
-        # Check if we should close the trade
-        elif should_close_trade(daily_df, today):
-            close_price = daily_df['close'].iloc[-1]
-            close_position(state, today.strftime('%Y-%m-%d'), close_price)
-            log_info(f"Trade closed at {close_price}")
-            send_email("💸 Trade Closed", f"Date: {today}\nPrice: {close_price}")
-
-        # ---------------------------
-        # Save Trade State
-        # ---------------------------
-        save_state(state)
-
-        # ---------------------------
-        # Optional Visualization
-        # ---------------------------
-        if config.PLOT_AFTER_RUN:
-            plot_trades(daily_df, state.get('history', []))
-            plot_cumulative_pnl(state.get('history', []))
+        # Send WhatsApp message
+        send_whatsapp_message(message)
+        log_info("WhatsApp message sent successfully.")
 
     except Exception as e:
         log_error(f"Error in daily runner: {e}")
 
-# Entry point
 if __name__ == "__main__":
     main()
+
+
+
+
