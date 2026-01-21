@@ -5,6 +5,7 @@ import pandas as pd
 import config
 from ig_data_loader import IGDataLoader
 from notification import send_whatsapp_message
+from telegram_notification import send_telegram_message
 from logger import log_info, log_error
 from trade_logic import should_open_trade, should_close_trade
 
@@ -46,7 +47,9 @@ def main():
             "TWILIO_ACCOUNT_SID",
             "TWILIO_AUTH_TOKEN",
             "TWILIO_FROM",
-            "TWILIO_TO"
+            "TWILIO_TO",
+            "TELEGRAM_BOT_TOKEN",
+            "TELEGRAM_CHAT_ID"
         ]
         for s in secrets_list:
             value = os.getenv(s)
@@ -93,7 +96,8 @@ def main():
             f"{action_msg}"
         )
 
-        # Send WhatsApp message
+        # Send telegram/WhatsApp message
+        send_telegram_message(message)
         send_whatsapp_message(message)
         log_info("WhatsApp message sent successfully.")
 
