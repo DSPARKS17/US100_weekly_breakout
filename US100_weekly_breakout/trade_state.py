@@ -21,7 +21,6 @@ def save_state(state):
         json.dump(state, f, indent=2)
 
 def open_position(state, date, price, size, stop):
-    # if first entry in current window, record anchor price
     if state.get("first_entry_price") is None:
         state["first_entry_price"] = price
 
@@ -31,47 +30,50 @@ def open_position(state, date, price, size, stop):
         'size': size,
         'stop_loss': stop
     }
-    print(f"\n📈 Position opened on {date} at {price} with size {size} and stop loss {stop}")
+
+    return {
+        "action": "OPEN",
+        "entry_price": price,
+        "size": size,
+        "stop_loss": stop
+    }
 
 def close_position(state, date, price, big_move_threshold=1000):
-    if state['position']:
-        entry = state['position']
-        pnl = (price - entry['entry_price']) * entry['size']
+    if not state['position']:
+        return None
 
-        state['history'].append({
-            'entry_date': entry['entry_date'],
-            'entry_price': entry['entry_price'],
-            'exit_date': date,
-            'exit_price': price,
-            'size': entry['size'],
-            'pnl': pnl
-        })
-        print(f"\n💸 Position closed on {date} at {price} (PnL: {pnl:.2f})")
+    entry = state['position']
+    pnl = (price - entry['entry_price']) * entry['size']
 
-        # Check big move
-        if state.get("first_entry_price") is not None:
-            move = price - state["first_entry_price"]
-            if move >= big_move_threshold:
-                state["big_move_done"] = True
-                print(f"🚫 Big move of {move:.0f} points reached — re-entries disabled this window.")
+    state['history'].append({
+        'entry_date': entry['entry_date'],
+        'entry_price': entry['entry_price'],
+        'exit_date': date,
+        'exit_price': price,
+        'size': entry['size'],
+        'pnl': pnl
+    })
 
-        state['position'] = None
+    if state.get("first_entry_price") is not None:
+        move = price - state["first_entry_price"]
+        if move >= big_move_threshold:
+            state["big_move_done"] = True
+
+    state['position'] = None
+
+    return {
+        "action": "CLOSE",
+        "exit_price": price,
+        "pnl": pnl
+    }
 
 def reset_window(state):
-    """
-    Call this when a new valid weekly window begins
-    (weekly > EMA50 and 2 closes above EMA8).
-    """
     state["first_entry_price"] = None
     state["big_move_done"] = False
     state["window_active"] = True
     state["weekly_block"] = False
-    print("\n🔄 New trading window started.")
 
 def end_window(state):
-    """
-    Call this when two weekly closes occur below EMA8.
-    """
     state["window_active"] = False
     state["weekly_block"] = True
-    print("\n⛔ Trading window ended due to double weekly close below EMA8.")
+

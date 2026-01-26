@@ -1,10 +1,13 @@
+# ig_data_loader.py
 import pandas as pd
 from trading_ig import IGService
 import config
 
 class IGDataLoader:
-    def __init__(self, epic=config.SYMBOL, ig_username=config.IG_USERNAME,
-                 ig_password=config.IG_PASSWORD, ig_api_key=config.IG_API_KEY):
+    def __init__(self, epic=config.SYMBOL,
+                 ig_username=config.IG_USERNAME,
+                 ig_password=config.IG_PASSWORD,
+                 ig_api_key=config.IG_API_KEY):
         self.epic = epic
         self.ig_service = IGService(
             username=ig_username,
@@ -14,34 +17,51 @@ class IGDataLoader:
         )
         self.ig_service.create_session()
 
-    def fetch_latest_prices(self, numpoints=5):
+    def fetch_latest_prices(self, numpoints=50, resolution="1D"):
+        """
+        Fetch historical prices from IG.
+        resolution: "1D" for daily, "1W" for weekly
+        Returns DataFrame with columns: open, high, low, close
+        """
         # Fetch raw prices
         raw = self.ig_service.fetch_historical_prices_by_epic(
             epic=self.epic,
-            resolution="1D",
+            resolution=resolution,
             numpoints=numpoints
         )
 
-        # Convert to DataFrame
-        df = pd.DataFrame(raw["prices"])
+        df = pd.DataFrame(raw.get("prices", []))
+
+        # Ensure prices exist
+        if df.empty:
+            raise ValueError("No price data returned from IG")
 
         # Extract mid prices safely
         def safe_mid(row, key):
             try:
-                return (row["bid"].get(key) + row["ask"].get(key)) / 2
-            except AttributeError:
+                bid = row.get("bid", {})
+                ask = row.get("ask", {})
+                return (bid.get(key, 0) + ask.get(key, 0)) / 2
+            except Exception:
                 return 0
 
         df["open"] = df.apply(lambda row: safe_mid(row, "Open"), axis=1)
         df["high"] = df.apply(lambda row: safe_mid(row, "High"), axis=1)
-        df["low"]  = df.apply(lambda row: safe_mid(row, "Low"), axis=1)
+        df["low"] = df.apply(lambda row: safe_mid(row, "Low"), axis=1)
         df["close"] = df.apply(lambda row: safe_mid(row, "Close"), axis=1)
 
-        # Keep only necessary columns
+        # Keep only needed columns
         df = df[["open", "high", "low", "close"]]
+
+        # Reset index to be clean
+        df = df.reset_index(drop=True)
 
         return df
 
+    def fetch_daily_prices(self, numpoints=50):
+        """Convenience method for daily prices"""
+        return self.fetch_latest_prices(numpoints=numpoints, resolution="1D")
 
-
-
+    def fetch_weekly_prices(self, numpoints=50):
+        """Convenience method for weekly prices"""
+        return self.fetch_latest_prices(numpoints=numpoints, resolution="1W")

@@ -7,34 +7,12 @@ from ig_data_loader import IGDataLoader
 from notification import send_whatsapp_message
 from telegram_notification import send_telegram_message
 from logger import log_info, log_error
-from trade_logic import should_open_trade, should_close_trade
+from trade_logic import should_open_trade, should_close_trade, get_stop_loss, position_size, can_reenter
+from trade_state import load_state, save_state
 
-# ---------------------------
-# Helper functions
-# ---------------------------
-def infer_trade_state(df_weekly, df_daily):
-    """
-    Infer current trade state (in_trade: True/False) based on historical data.
-    Iterates through historical daily and weekly closes.
-    """
-    in_trade = False
-    # Ensure data is sorted oldest -> newest
-    df_daily = df_daily.reset_index(drop=True)
-    df_weekly = df_weekly.reset_index(drop=True)
+# Default account value
+ACCOUNT_VALUE = 13000
 
-    for i in range(len(df_daily)):
-        daily_slice = df_daily.iloc[:i+1]
-        weekly_slice = df_weekly.iloc[:i+1]
-
-        if not in_trade and should_open_trade(weekly_slice, daily_slice):
-            in_trade = True
-        elif in_trade and should_close_trade(daily_slice):
-            in_trade = False
-    return in_trade
-
-# ---------------------------
-# Main runner
-# ---------------------------
 def main():
     try:
         # ---------------------------
@@ -59,54 +37,133 @@ def main():
         # Load data
         # ---------------------------
         loader = IGDataLoader()
-        daily_df = loader.fetch_latest_prices(numpoints=50)  # fetch last 50 daily bars
-        weekly_df = loader.fetch_latest_prices(numpoints=50)  # replace with actual weekly fetch if available
+        daily_df = loader.fetch_latest_prices(numpoints=50)
+        weekly_df = loader.fetch_latest_prices(numpoints=50)  # replace with actual weekly fetch if possible
         log_info("Data loaded successfully.")
 
-        # Take the latest completed day
-        last_day = daily_df.iloc[-2]
-
-        # Convert to floats explicitly
-        open_price  = float(last_day['open'])
-        high_price  = float(last_day['high'])
-        low_price   = float(last_day['low'])
-        close_price = float(last_day['close'])
-
-        # Calculate 8EMA on daily close
+        # ---------------------------
+        # Calculate EMAs
+        # ---------------------------
+        daily_df['EMA50'] = daily_df['close'].ewm(span=50, adjust=False).mean()
+        daily_df['EMA100'] = daily_df['close'].ewm(span=100, adjust=False).mean()
         daily_df['EMA8'] = daily_df['close'].ewm(span=8, adjust=False).mean()
-        ema8 = daily_df['EMA8'].iloc[-2]
 
-        # Infer current trade state
-        in_trade = infer_trade_state(weekly_df, daily_df)
+        weekly_df['EMA50'] = weekly_df['close'].ewm(span=50, adjust=False).mean()
+        weekly_df['EMA8'] = weekly_df['close'].ewm(span=8, adjust=False).mean()
 
-        # Decide action message
+        # ---------------------------
+        # Latest daily values
+        # ---------------------------
+        last_daily = daily_df.iloc[-2]
+        open_price = float(last_daily['open'])
+        high_price = float(last_daily['high'])
+        low_price = float(last_daily['low'])
+        close_price = float(last_daily['close'])
+        ema50 = float(last_daily['EMA50'])
+        ema100 = float(last_daily['EMA100'])
+        ema8 = float(last_daily['EMA8'])
+
+        # ---------------------------
+        # Latest weekly values
+        # ---------------------------
+        last_weekly = weekly_df.iloc[-1]
+        prev_weekly = weekly_df.iloc[-2]
+
+        weekly_close_last = float(last_weekly['close'])
+        weekly_close_prev = float(prev_weekly['close'])
+        weekly_ema50 = float(last_weekly['EMA50'])
+        weekly_ema8_last = float(last_weekly['EMA8'])
+        weekly_ema8_prev = float(prev_weekly['EMA8'])
+
+        weekly_trend_valid = weekly_close_last > weekly_ema50
+        weekly_window_valid = (weekly_close_prev > weekly_ema8_prev) and (weekly_close_last > weekly_ema8_last)
+
+        # ---------------------------
+        # Load trade state
+        # ---------------------------
+        state = load_state()
+        in_trade = state.get("position") is not None
+
+        # ---------------------------
+        # Suggested position size
+        # ---------------------------
+        suggested_size = position_size(ACCOUNT_VALUE, close_price)
+
+        # ---------------------------
+        # Build action message
+        # ---------------------------
         if in_trade:
-            action_msg = "📈 Currently in trade: remain open or close if exit conditions met."
+            entry_price = state['position']['entry_price']
+            pnl = (close_price - entry_price) * state['position']['size']
+            big_move_done = state.get("big_move_done", False)
+            action_msg = (
+                f"Trade Status:\n🟢 IN TRADE\n"
+                f"Entry price: {entry_price:.2f}\n"
+                f"Current move: {close_price - entry_price:+.0f} points\n"
+                f"Big move reached: {'YES' if big_move_done else 'NO'}\n"
+                f"Position size: £{state['position']['size']:.2f} / point\n\n"
+                f"📌 Action:\n➡️ Hold position"
+            )
         else:
-            action_msg = "📉 Currently not in trade: consider opening if entry conditions met."
+            entry_allowed = should_open_trade(weekly_df, daily_df) and not state.get("big_move_done", False)
+            reentry_allowed = can_reenter(weekly_df, daily_df, big_move_done=state.get("big_move_done", False))
+            action_msg = (
+                f"Trade Status:\n🟢 NOT IN TRADE\n\n"
+                f"Entry Conditions:\n"
+                f"Weekly trend: {'VALID' if weekly_trend_valid else 'INVALID'}\n"
+                f"Daily trend: {'VALID' if (close_price > ema50 and close_price > ema100) else 'INVALID'}\n"
+                f"Re-entry allowed: {'YES' if reentry_allowed else 'NO'}\n"
+                f"Big move lockout: {'YES' if state.get('big_move_done', False) else 'NO'}\n\n"
+                f"If opened today:\nSuggested size: £{suggested_size:.2f} / point\n"
+                f"Stop loss: {get_stop_loss(daily_df):.2f} (Daily EMA100)\n\n"
+                f"📌 Action:\n➡️ {'Consider OPENING a long position' if entry_allowed else 'Do nothing'}"
+            )
 
-        # Build message
-        message = (
-            f"📊 {config.SYMBOL} Daily Summary ({datetime.now().strftime('%Y-%m-%d')})\n"
-            f"Open : {open_price:.2f}\n"
-            f"High : {high_price:.2f}\n"
-            f"Low  : {low_price:.2f}\n"
-            f"Close: {close_price:.2f}\n"
-            f"8EMA : {ema8:.2f}\n\n"
-            f"{action_msg}"
-        )
+        # ---------------------------
+        # Format weekly last 2 close dates
+        # ---------------------------
+        try:
+            weekly_dates = weekly_df.index[-2:].to_list()
+            weekly_dates_str = [d.strftime('%Y-%m-%d') if isinstance(d, pd.Timestamp) else str(d) for d in weekly_dates]
+        except Exception:
+            weekly_dates_str = ['N/A', 'N/A']
 
-        # Send telegram/WhatsApp message
+        # ---------------------------
+        # Compose full message
+        # ---------------------------
+        msg_lines = [
+            f"📊 {config.SYMBOL} Daily Strategy Update",
+            f"Date: {datetime.now().strftime('%Y-%m-%d')}\n",
+            "Daily:",
+            f"Close: {close_price:.2f}",
+            f"EMA 50: {ema50:.2f} ({'Above ✅' if close_price > ema50 else 'Below ❌'})",
+            f"EMA 100: {ema100:.2f} ({'Above ✅' if close_price > ema100 else 'Below ❌'})",
+            f"EMA 8: {ema8:.2f}\n",
+            "Weekly:",
+            f"Close above EMA50: {weekly_close_last:.2f} vs EMA50: {weekly_ema50:.2f} ({'✅' if weekly_trend_valid else '❌'})",
+            f"2 consecutive closes above EMA8 ({weekly_dates_str[0]} / {weekly_dates_str[1]}): "
+            f"{weekly_close_prev:.2f} / {weekly_close_last:.2f} vs EMA8: {weekly_ema8_prev:.2f} / {weekly_ema8_last:.2f} "
+            f"({'✅' if weekly_window_valid else '❌'})\n",
+            action_msg
+        ]
+
+        message = "\n".join(msg_lines)
+
+        # ---------------------------
+        # Send messages
+        # ---------------------------
         send_telegram_message(message)
         send_whatsapp_message(message)
-        log_info("WhatsApp message sent successfully.")
+        log_info("Daily strategy update sent successfully.")
+
+        # ---------------------------
+        # Save trade state
+        # ---------------------------
+        save_state(state)
 
     except Exception as e:
         log_error(f"Error in daily runner: {e}")
 
+
 if __name__ == "__main__":
     main()
-
-
-
-
