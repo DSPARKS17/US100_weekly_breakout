@@ -1,4 +1,3 @@
-# daily_runner.py
 from datetime import datetime
 import os
 import pandas as pd
@@ -10,24 +9,18 @@ from logger import log_info, log_error
 from trade_logic import should_open_trade, should_close_trade, get_stop_loss, position_size, can_reenter
 from trade_state import load_state, save_state
 
-# Default account value
-ACCOUNT_VALUE = 13000
+# Fallback account value if IG balance cannot be fetched
+FALLBACK_ACCOUNT_VALUE = 13000
 
 def main():
     try:
         # ---------------------------
-        # DEBUG: Check if secrets are detected
+        # Debug: check secrets
         # ---------------------------
         secrets_list = [
-            "IG_USERNAME",
-            "IG_PASSWORD",
-            "IG_API_KEY",
-            "TWILIO_ACCOUNT_SID",
-            "TWILIO_AUTH_TOKEN",
-            "TWILIO_FROM",
-            "TWILIO_TO",
-            "TELEGRAM_BOT_TOKEN",
-            "TELEGRAM_CHAT_ID"
+            "IG_USERNAME", "IG_PASSWORD", "IG_API_KEY",
+            "TWILIO_ACCOUNT_SID", "TWILIO_AUTH_TOKEN", "TWILIO_FROM", "TWILIO_TO",
+            "TELEGRAM_BOT_TOKEN", "TELEGRAM_CHAT_ID"
         ]
         for s in secrets_list:
             value = os.getenv(s)
@@ -37,9 +30,15 @@ def main():
         # Load data
         # ---------------------------
         loader = IGDataLoader()
-        daily_df = loader.fetch_latest_prices(numpoints=50)
-        weekly_df = loader.fetch_latest_prices(numpoints=50)  # replace with actual weekly fetch if possible
-        log_info("Data loaded successfully.")
+        daily_df = loader.fetch_daily_prices(numpoints=50)
+        weekly_df = loader.fetch_weekly_prices(numpoints=50)
+        log_info("Price data loaded.")
+
+        # ---------------------------
+        # Fetch account balance
+        # ---------------------------
+        account_value = loader.fetch_account_balance() or FALLBACK_ACCOUNT_VALUE
+        log_info(f"Using account value: £{account_value:.2f}")
 
         # ---------------------------
         # Calculate EMAs
@@ -47,7 +46,6 @@ def main():
         daily_df['EMA50'] = daily_df['close'].ewm(span=50, adjust=False).mean()
         daily_df['EMA100'] = daily_df['close'].ewm(span=100, adjust=False).mean()
         daily_df['EMA8'] = daily_df['close'].ewm(span=8, adjust=False).mean()
-
         weekly_df['EMA50'] = weekly_df['close'].ewm(span=50, adjust=False).mean()
         weekly_df['EMA8'] = weekly_df['close'].ewm(span=8, adjust=False).mean()
 
@@ -68,7 +66,6 @@ def main():
         # ---------------------------
         last_weekly = weekly_df.iloc[-1]
         prev_weekly = weekly_df.iloc[-2]
-
         weekly_close_last = float(last_weekly['close'])
         weekly_close_prev = float(prev_weekly['close'])
         weekly_ema50 = float(last_weekly['EMA50'])
@@ -87,10 +84,10 @@ def main():
         # ---------------------------
         # Suggested position size
         # ---------------------------
-        suggested_size = position_size(ACCOUNT_VALUE, close_price)
+        suggested_size = position_size(account_value, close_price)
 
         # ---------------------------
-        # Build action message
+        # Compose message
         # ---------------------------
         if in_trade:
             entry_price = state['position']['entry_price']
@@ -129,11 +126,12 @@ def main():
             weekly_dates_str = ['N/A', 'N/A']
 
         # ---------------------------
-        # Compose full message
+        # Full message
         # ---------------------------
         msg_lines = [
             f"📊 {config.SYMBOL} Daily Strategy Update",
             f"Date: {datetime.now().strftime('%Y-%m-%d')}\n",
+            f"Account Value: £{account_value:.2f}\n",
             "Daily:",
             f"Close: {close_price:.2f}",
             f"EMA 50: {ema50:.2f} ({'Above ✅' if close_price > ema50 else 'Below ❌'})",
@@ -167,3 +165,4 @@ def main():
 
 if __name__ == "__main__":
     main()
+
