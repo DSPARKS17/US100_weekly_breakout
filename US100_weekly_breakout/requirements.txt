@@ -1,4 +1,17 @@
-pandas
-trading_ig
-twilio
-python-dotenv
+# Core data
+numpy==1.26.1
+pandas==2.0.3
+
+# IG API wrapper
+trading-ig==1.1.4
+
+# Messaging / notifications
+twilio==8.9.0
+python-telegram-bot==20.3
+
+# Logging
+loguru==0.7.0
+
+# Optional utilities (if used in your code)
+python-dotenv==1.0.0
+requests==2.31.0

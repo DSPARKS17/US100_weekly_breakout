@@ -18,23 +18,15 @@ class IGDataLoader:
         self.ig_service.create_session()
 
     def fetch_latest_prices(self, numpoints=50, resolution="1D"):
-        """
-        Fetch historical prices from IG.
-        resolution: "1D" for daily, "1W" for weekly
-        Returns DataFrame with columns: open, high, low, close
-        """
         raw = self.ig_service.fetch_historical_prices_by_epic(
             epic=self.epic,
             resolution=resolution,
             numpoints=numpoints
         )
-
         df = pd.DataFrame(raw.get("prices", []))
-
         if df.empty:
             raise ValueError("No price data returned from IG")
 
-        # Extract mid prices safely
         def safe_mid(row, key):
             try:
                 bid = row.get("bid", {})
@@ -48,35 +40,22 @@ class IGDataLoader:
         df["low"]  = df.apply(lambda row: safe_mid(row, "Low"), axis=1)
         df["close"] = df.apply(lambda row: safe_mid(row, "Close"), axis=1)
 
-        df = df[["open", "high", "low", "close"]].reset_index(drop=True)
-        return df
+        return df[["open", "high", "low", "close"]].reset_index(drop=True)
 
     def fetch_daily_prices(self, numpoints=50):
-        """Convenience method for daily prices"""
         return self.fetch_latest_prices(numpoints=numpoints, resolution="1D")
 
     def fetch_weekly_prices(self, numpoints=50):
-        """Convenience method for weekly prices"""
         return self.fetch_latest_prices(numpoints=numpoints, resolution="1W")
 
     def fetch_account_balance(self):
-        """
-        Fetch the live balance from IG.
-        Returns the first enabled account's balance (float) or None if not found.
-        """
         try:
             accounts = self.ig_service.fetch_accounts()
-            print("DEBUG: Raw accounts response:", accounts)
-
-            # Handle DataFrame response
             if isinstance(accounts, pd.DataFrame):
                 enabled_accounts = accounts[accounts['status'] == 'ENABLED']
                 if enabled_accounts.empty:
                     raise ValueError("No enabled accounts found")
-                balance = float(enabled_accounts.iloc[0]['balance'])
-                return balance
-
-            # Handle dict response (older IG API)
+                return float(enabled_accounts.iloc[0]['balance'])
             elif isinstance(accounts, dict):
                 accounts_list = accounts.get("accounts")
                 if isinstance(accounts_list, dict):
@@ -84,12 +63,43 @@ class IGDataLoader:
                 enabled_account = next((a for a in accounts_list if a.get("status") == "ENABLED"), None)
                 if enabled_account is None:
                     raise ValueError("No enabled accounts found")
-                balance = float(enabled_account.get("balance", 0))
-                return balance
-
+                return float(enabled_account.get("balance", 0))
             else:
                 raise TypeError("Unexpected accounts response type")
-
         except Exception as e:
             print(f"⚠️ Could not fetch account balance: {e}")
             return None
+
+    def fetch_open_trade_info(self):
+        """
+        Fetch open trade info from IG for this epic.
+        Returns dict:
+            - in_trade: bool
+            - entry_price
+            - stop_level
+            - size
+            - net_change
+            - created_date
+        """
+        try:
+            positions = self.ig_service.fetch_open_positions()
+
+            if positions.empty:
+                return {"in_trade": False}
+
+            epic_positions = positions[positions["epic"] == self.epic]
+            if epic_positions.empty:
+                return {"in_trade": False}
+
+            pos = epic_positions.iloc[0]
+            return {
+                "in_trade": True,
+                "entry_price": float(pos.get("level", 0)),
+                "stop_level": float(pos.get("stopLevel", 0)),
+                "size": float(pos.get("size", 0)),
+                "net_change": float(pos.get("netChange", 0)),
+                "created_date": pos.get("createdDate", "N/A")
+            }
+        except Exception as e:
+            print(f"⚠️ Could not fetch open trade info: {e}")
+            return {"in_trade": False}

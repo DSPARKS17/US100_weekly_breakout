@@ -1,3 +1,4 @@
+# daily_runner.py
 from datetime import datetime
 import os
 import pandas as pd
@@ -50,16 +51,16 @@ def main():
         weekly_df['EMA8'] = weekly_df['close'].ewm(span=8, adjust=False).mean()
 
         # ---------------------------
-        # Latest daily values
+        # Latest daily values (last fully closed bar)
         # ---------------------------
-        last_daily = daily_df.iloc[-2]
-        open_price = float(last_daily['open'])
-        high_price = float(last_daily['high'])
-        low_price = float(last_daily['low'])
-        close_price = float(last_daily['close'])
-        ema50 = float(last_daily['EMA50'])
-        ema100 = float(last_daily['EMA100'])
-        ema8 = float(last_daily['EMA8'])
+        last_closed_daily = daily_df.iloc[-2]
+        open_price = float(last_closed_daily['open'])
+        high_price = float(last_closed_daily['high'])
+        low_price = float(last_closed_daily['low'])
+        close_price = float(last_closed_daily['close'])
+        ema50 = float(last_closed_daily['EMA50'])
+        ema100 = float(last_closed_daily['EMA100'])
+        ema8 = float(last_closed_daily['EMA8'])
 
         # ---------------------------
         # Latest weekly values
@@ -79,7 +80,24 @@ def main():
         # Load trade state
         # ---------------------------
         state = load_state()
-        in_trade = state.get("position") is not None
+
+        # ---------------------------
+        # Check open positions via IG
+        # ---------------------------
+        try:
+            positions_df = loader.ig_service.fetch_open_positions()
+            in_trade = not positions_df.empty
+            if in_trade:
+                # Take the first open position (if multiple)
+                pos = positions_df.iloc[0]
+                entry_price = float(pos['level'])
+                stop_level = float(pos['stopLevel']) if pos['stopLevel'] else None
+                created_date = pd.to_datetime(pos['createdDate'])
+                points_move = close_price - entry_price
+                big_move_done = state.get("big_move_done", False)
+        except Exception as e:
+            log_error(f"Error fetching open positions: {e}")
+            in_trade = False
 
         # ---------------------------
         # Suggested position size
@@ -90,13 +108,12 @@ def main():
         # Compose message
         # ---------------------------
         if in_trade:
-            entry_price = state['position']['entry_price']
-            pnl = (close_price - entry_price) * state['position']['size']
-            big_move_done = state.get("big_move_done", False)
             action_msg = (
                 f"Trade Status:\n🟢 IN TRADE\n"
                 f"Entry price: {entry_price:.2f}\n"
-                f"Current move: {close_price - entry_price:+.0f} points\n"
+                f"Stop level: {stop_level if stop_level else 'N/A'}\n"
+                f"Entry date: {created_date.strftime('%Y-%m-%d %H:%M')}\n"
+                f"Current move: {points_move:+.0f} points\n"
                 f"Big move reached: {'YES' if big_move_done else 'NO'}\n"
                 f"Position size: £{state['position']['size']:.2f} / point\n\n"
                 f"📌 Action:\n➡️ Hold position"
@@ -104,15 +121,17 @@ def main():
         else:
             entry_allowed = should_open_trade(weekly_df, daily_df) and not state.get("big_move_done", False)
             reentry_allowed = can_reenter(weekly_df, daily_df, big_move_done=state.get("big_move_done", False))
+            # STOP LOSS now comes from the last fully closed bar for EMA100 alignment
+            stop_loss = get_stop_loss(last_closed_daily)
             action_msg = (
-                f"Trade Status:\n🟢 NOT IN TRADE\n\n"
+                f"Trade Status:\n🔴 NOT IN TRADE\n\n"
                 f"Entry Conditions:\n"
                 f"Weekly trend: {'VALID' if weekly_trend_valid else 'INVALID'}\n"
                 f"Daily trend: {'VALID' if (close_price > ema50 and close_price > ema100) else 'INVALID'}\n"
                 f"Re-entry allowed: {'YES' if reentry_allowed else 'NO'}\n"
                 f"Big move lockout: {'YES' if state.get('big_move_done', False) else 'NO'}\n\n"
                 f"If opened today:\nSuggested size: £{suggested_size:.2f} / point\n"
-                f"Stop loss: {get_stop_loss(daily_df):.2f} (Daily EMA100)\n\n"
+                f"Stop loss: {stop_loss:.2f} (Daily EMA100)\n\n"
                 f"📌 Action:\n➡️ {'Consider OPENING a long position' if entry_allowed else 'Do nothing'}"
             )
 
@@ -165,4 +184,3 @@ def main():
 
 if __name__ == "__main__":
     main()
-
