@@ -31,8 +31,19 @@ def main():
         # Load data
         # ---------------------------
         loader = IGDataLoader()
-        daily_df = loader.fetch_daily_prices(numpoints=50)
-        weekly_df = loader.fetch_weekly_prices(numpoints=50)
+
+        DAILY_BARS = 250
+        WEEKLY_BARS = 200
+
+        daily_df = loader.fetch_daily_prices(numpoints=DAILY_BARS)
+        weekly_df = loader.fetch_weekly_prices(numpoints=WEEKLY_BARS)
+	
+        if len(daily_df) < 120:
+            raise ValueError(f"Insufficient daily bars returned: {len(daily_df)}")
+
+        if len(weekly_df) < 60:
+            raise ValueError(f"Insufficient weekly bars returned: {len(weekly_df)}")	
+
         log_info("Price data loaded.")
 
         # ---------------------------
@@ -65,8 +76,8 @@ def main():
         # ---------------------------
         # Latest weekly values
         # ---------------------------
-        last_weekly = weekly_df.iloc[-1]
-        prev_weekly = weekly_df.iloc[-2]
+        last_weekly = weekly_df.iloc[-2]
+        prev_weekly = weekly_df.iloc[-3]
         weekly_close_last = float(last_weekly['close'])
         weekly_close_prev = float(prev_weekly['close'])
         weekly_ema50 = float(last_weekly['EMA50'])
