@@ -1,5 +1,6 @@
 import pandas as pd
 
+
 def check_consecutive(df, ema_series, bars=2, above=True):
     """
     Check if the last `bars` closes are consecutively above or below an EMA.
@@ -17,20 +18,68 @@ def check_consecutive(df, ema_series, bars=2, above=True):
         return (closes < emas).all()
 
 
+def find_weekly_trend_reversal(df_weekly):
+    """
+    Stateful weekly trend logic.
+
+    Returns:
+        (is_valid: bool, valid_since: Timestamp | None)
+    """
+    closes = df_weekly['close']
+    ema8 = df_weekly['EMA8']
+    dates = df_weekly.index
+
+    above = closes > ema8
+    below = closes < ema8
+
+    valid = False
+    valid_since = None
+    below_streak = 0
+    seen_two_below = False
+
+    for i in range(len(df_weekly)):
+        if below.iloc[i]:
+            below_streak += 1
+        else:
+            below_streak = 0
+
+        # Mark that we've had a bearish regime
+        if below_streak >= 2:
+            seen_two_below = True
+
+        # Detect reversal ONLY after bearish regime
+        if (
+            seen_two_below
+            and i >= 1
+            and above.iloc[i]
+            and above.iloc[i - 1]
+            and not valid
+        ):
+            valid = True
+            valid_since = dates[i]  # use the second consecutive close above EMA8
+            below_streak = 0
+            continue
+
+        # If valid, watch for invalidation
+        if valid and below_streak >= 2:
+            valid = False
+            valid_since = None
+            seen_two_below = True  # reset for next cycle
+
+    return valid, valid_since
+
+
 def should_open_trade(df_weekly, df_daily):
     try:
-        weekly_close = float(df_weekly['close'].iloc[-1])
-        weekly_ema_50 = float(df_weekly['EMA50'].iloc[-1])
-        weekly_ema_8 = df_weekly['EMA8']
+        weekly_valid, _ = find_weekly_trend_reversal(df_weekly)
 
-        daily_close = float(df_daily['close'].iloc[-1])
-        daily_ema_50 = float(df_daily['EMA50'].iloc[-1])
-        daily_ema_100 = float(df_daily['EMA100'].iloc[-1])
+        daily_close = float(df_daily['close'].iloc[-2])
+        daily_ema50 = float(df_daily['EMA50'].iloc[-2])
+        daily_ema100 = float(df_daily['EMA100'].iloc[-2])
 
-        weekly_ok = weekly_close > weekly_ema_50 and check_consecutive(df_weekly, weekly_ema_8, bars=2, above=True)
-        daily_ok = daily_close > daily_ema_50 and daily_close > daily_ema_100
+        daily_ok = daily_close > daily_ema50 and daily_close > daily_ema100
 
-        return weekly_ok and daily_ok
+        return weekly_valid and daily_ok
 
     except Exception:
         return False
@@ -38,24 +87,22 @@ def should_open_trade(df_weekly, df_daily):
 
 def should_close_trade(df_daily):
     try:
-        daily_close = float(df_daily['close'].iloc[-1])
-        daily_ema_50 = float(df_daily['EMA50'].iloc[-1])
-        return daily_close < daily_ema_50
+        daily_close = float(df_daily['close'].iloc[-2])
+        daily_ema50 = float(df_daily['EMA50'].iloc[-2])
+        return daily_close < daily_ema50
     except Exception:
         return False
 
 
-def get_stop_loss(df_daily, buffer_points=5):
+def get_stop_loss(last_closed_daily, buffer_points=5):
     try:
-        return float(df_daily['EMA100'].iloc[-1] - buffer_points)
+        ema100 = float(last_closed_daily['EMA100'])
+        return ema100 - buffer_points
     except Exception:
         return None
 
 
 def position_size(account_value, entry_price):
-    """
-    £ per point = account_value / entry_price
-    """
     return float(account_value) / float(entry_price) if entry_price > 0 else 0.0
 
 
