@@ -21,6 +21,11 @@ FALLBACK_ACCOUNT_VALUE = 13000
 
 def to_week_commencing(ts):
     ts = pd.to_datetime(ts)
+
+    # 🔑 normalize timezone (fixes UTC vs naive comparison errors)
+    if ts.tzinfo is not None:
+        ts = ts.tz_convert(None)
+
     return (ts - pd.Timedelta(days=ts.weekday())).date()
 
 
@@ -65,44 +70,35 @@ def main():
         # ---------------------------
         # Calculate EMAs
         # ---------------------------
-        daily_df['EMA50'] = daily_df['close'].ewm(span=50, adjust=False).mean()
-        daily_df['EMA100'] = daily_df['close'].ewm(span=100, adjust=False).mean()
-        daily_df['EMA8'] = daily_df['close'].ewm(span=8, adjust=False).mean()
+        daily_df["EMA50"] = daily_df["close"].ewm(span=50, adjust=False).mean()
+        daily_df["EMA100"] = daily_df["close"].ewm(span=100, adjust=False).mean()
+        daily_df["EMA8"] = daily_df["close"].ewm(span=8, adjust=False).mean()
 
-        weekly_df['EMA50'] = weekly_df['close'].ewm(span=50, adjust=False).mean()
-        weekly_df['EMA8'] = weekly_df['close'].ewm(span=8, adjust=False).mean()
+        weekly_df["EMA50"] = weekly_df["close"].ewm(span=50, adjust=False).mean()
+        weekly_df["EMA8"] = weekly_df["close"].ewm(span=8, adjust=False).mean()
 
         # ---------------------------
         # Latest daily values (last fully closed bar)
         # ---------------------------
         last_daily = daily_df.iloc[-2]
-        close_price = float(last_daily['close'])
-        ema50 = float(last_daily['EMA50'])
-        ema100 = float(last_daily['EMA100'])
-        ema8 = float(last_daily['EMA8'])
+
+        close_price = float(last_daily["close"].item())
+        ema50 = float(last_daily["EMA50"].item())
+        ema100 = float(last_daily["EMA100"].item())
+        ema8 = float(last_daily["EMA8"].item())
 
         # ---------------------------
-        # Latest weekly values
+        # Latest weekly values (completed weeks only)
         # ---------------------------
-        # Filter only completed weeks (ignore current incomplete week)
-        today = pd.Timestamp.now().normalize()
-        completed_weeks = weekly_df[weekly_df.index < today]
+        last_weekly = weekly_df.iloc[-2]
+        prev_weekly = weekly_df.iloc[-3]
 
-        if len(completed_weeks) < 2:
-            raise ValueError("Not enough completed weekly bars to compute last 2 weeks.")
+        weekly_close_last = float(last_weekly["close"].item())
+        weekly_close_prev = float(prev_weekly["close"].item())
+        weekly_ema50 = float(last_weekly["EMA50"].item())
+        weekly_ema8_last = float(last_weekly["EMA8"].item())
+        weekly_ema8_prev = float(prev_weekly["EMA8"].item())
 
-        last_weekly = completed_weeks.iloc[-1]   # most recent fully closed week
-        prev_weekly = completed_weeks.iloc[-2]   # previous fully closed week
-
-        weekly_close_last = float(last_weekly['close'])
-        weekly_close_prev = float(prev_weekly['close'])
-        weekly_ema50 = float(last_weekly['EMA50'])
-        weekly_ema8_last = float(last_weekly['EMA8'])
-        weekly_ema8_prev = float(prev_weekly['EMA8'])
-
-        # ---------------------------
-        # Week commencing string for display (final fix)
-        # ---------------------------
         wc_prev = to_week_commencing(prev_weekly.name)
         wc_last = to_week_commencing(last_weekly.name)
         weekly_dates_str = f"wc {wc_prev} / wc {wc_last}"
@@ -125,22 +121,6 @@ def main():
         big_move_done = state.get("big_move_done", False)
 
         # ---------------------------
-        # Check open positions via IG
-        # ---------------------------
-        try:
-            positions_df = loader.ig_service.fetch_open_positions()
-            in_trade = not positions_df.empty
-            if in_trade:
-                pos = positions_df.iloc[0]
-                entry_price = float(pos['level'])
-                stop_level = float(pos['stopLevel']) if pos['stopLevel'] else None
-                created_date = pd.to_datetime(pos['createdDate'])
-                points_move = close_price - entry_price
-        except Exception as e:
-            log_error(f"Error fetching open positions: {e}")
-            in_trade = False
-
-        # ---------------------------
         # Suggested position size
         # ---------------------------
         suggested_size = position_size(account_value, close_price)
@@ -149,32 +129,20 @@ def main():
         # ---------------------------
         # Compose message
         # ---------------------------
-        if in_trade:
-            action_msg = (
-                f"Trade Status:\n🟢 IN TRADE\n"
-                f"Entry price: {entry_price:.2f}\n"
-                f"Stop level: {stop_level if stop_level else 'N/A'}\n"
-                f"Entry date: {created_date.strftime('%Y-%m-%d %H:%M')}\n"
-                f"Current move: {points_move:+.0f} points\n"
-                f"Big move reached: {'YES' if big_move_done else 'NO'}\n"
-                f"Position size: £{state['position']['size']:.2f} / point\n\n"
-                f"📌 Action:\n➡️ Hold position"
-            )
-        else:
-            entry_allowed = should_open_trade(weekly_df, daily_df)
-            reentry_allowed = can_reenter(weekly_df, daily_df, big_move_done)
+        entry_allowed = should_open_trade(weekly_df, daily_df)
+        reentry_allowed = can_reenter(weekly_df, daily_df, big_move_done)
 
-            action_msg = (
-                f"Trade Status:\n🔴 NOT IN TRADE\n\n"
-                f"Entry Conditions:\n"
-                f"Weekly trend: {weekly_trend_str}\n"
-                f"Daily trend: {'VALID' if close_price > ema50 and close_price > ema100 else 'INVALID'}\n"
-                f"Re-entry allowed: {'YES' if reentry_allowed else 'NO'}\n"
-                f"Big move lockout: {'YES' if big_move_done else 'NO'}\n\n"
-                f"If opened today:\nSuggested size: £{suggested_size:.2f} / point\n"
-                f"Stop loss: {stop_loss:.2f} (Daily EMA100)\n\n"
-                f"📌 Action:\n➡️ {'Consider OPENING a long position' if entry_allowed else 'Do nothing'}"
-            )
+        action_msg = (
+            f"Trade Status:\n🔴 NOT IN TRADE\n\n"
+            f"Entry Conditions:\n"
+            f"Weekly trend: {weekly_trend_str}\n"
+            f"Daily trend: {'VALID' if close_price > ema50 and close_price > ema100 else 'INVALID'}\n"
+            f"Re-entry allowed: {'YES' if reentry_allowed else 'NO'}\n"
+            f"Big move lockout: {'YES' if big_move_done else 'NO'}\n\n"
+            f"If opened today:\nSuggested size: £{suggested_size:.2f} / point\n"
+            f"Stop loss: {stop_loss:.2f} (Daily EMA100)\n\n"
+            f"📌 Action:\n➡️ {'Consider OPENING a long position' if entry_allowed else 'Do nothing'}"
+        )
 
         # ---------------------------
         # Build final message
@@ -191,7 +159,8 @@ def main():
             "Weekly:",
             f"Close above EMA50: {weekly_close_last:.2f} vs EMA50 {weekly_ema50:.2f}",
             f"2 consecutive closes above EMA8 ({weekly_dates_str}): "
-            f"{weekly_close_prev:.2f} / {weekly_close_last:.2f} vs EMA8: {weekly_ema8_prev:.2f} / {weekly_ema8_last:.2f}\n",
+            f"{weekly_close_prev:.2f} / {weekly_close_last:.2f} vs EMA8: "
+            f"{weekly_ema8_prev:.2f} / {weekly_ema8_last:.2f}\n",
             action_msg
         ])
 
@@ -202,9 +171,6 @@ def main():
         send_whatsapp_message(message)
         log_info("Daily strategy update sent successfully.")
 
-        # ---------------------------
-        # Save trade state
-        # ---------------------------
         save_state(state)
 
     except Exception as e:

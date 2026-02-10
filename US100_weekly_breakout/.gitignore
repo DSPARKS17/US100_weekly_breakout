@@ -1,0 +1,73 @@
+# macOS
+.DS_Store
+
+# Environment / secrets
+.env
+
+# Python
+__pycache__/
+*.pyc
+.ipynb_checkpoints/
+
+# Virtual environments
+venv/
+venv_ssl/
+
+# Logs
+logs/
+
+# Cached market data
+cache/*
+# macOS
+.DS_Store
+
+# Environment / secrets
+.env
+
+# Python
+__pycache__/
+*.pyc
+.ipynb_checkpoints/
+
+# Virtual environments
+venv/
+venv_ssl/
+
+# Logs
+logs/
+
+# Cached market data
+cache/*
+
+# macOS
+.DS_Store
+
+# Environment / secrets
+.env
+
+# Python
+__pycache__/
+*.pyc
+.ipynb_checkpoints/
+
+# Virtual environments
+venv/
+venv_ssl/
+
+# Logs
+logs/
+
+# Cached market data
+cache/*
+!cache/.gitkeep
+
+# Jupyter / scratch files
+*.ipynb
+Untitled.ipynb
+
+# Local state
+trade_state.json
+
+# Third-party libs
+trading-ig/
+
