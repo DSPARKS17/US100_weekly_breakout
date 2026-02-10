@@ -23,6 +23,7 @@ class IGDataLoader:
             resolution=resolution,
             numpoints=numpoints
         )
+
         df = pd.DataFrame(raw.get("prices", []))
         if df.empty:
             raise ValueError("No price data returned from IG")
@@ -40,7 +41,32 @@ class IGDataLoader:
         df["low"]  = df.apply(lambda row: safe_mid(row, "Low"), axis=1)
         df["close"] = df.apply(lambda row: safe_mid(row, "Close"), axis=1)
 
-        return df[["open", "high", "low", "close"]].reset_index(drop=True)
+        # ---------------------------
+        # Robustly extract timestamp
+        # ---------------------------
+        if "snapshotTimeUTC" in df.columns:
+            df["timestamp"] = pd.to_datetime(df["snapshotTimeUTC"], errors="coerce")
+        elif "snapshotTime" in df.columns:
+            df["timestamp"] = pd.to_datetime(df["snapshotTime"], errors="coerce")
+        else:
+            # Best effort: look for string columns containing 'time'
+            candidates = [
+                c for c in df.columns
+                if isinstance(c, str) and "time" in c.lower()
+            ]
+            if candidates:
+                df["timestamp"] = pd.to_datetime(df[candidates[0]], errors="coerce")
+            else:
+                # ultimate fallback if no time-like column exists,
+                # rely on IG ordering (oldest→newest)
+                df["timestamp"] = pd.date_range(
+                    end=pd.Timestamp("now"), periods=len(df), freq="D"
+                )
+
+        # Use timestamp as index
+        df = df.set_index("timestamp").sort_index()
+
+        return df[["open", "high", "low", "close"]]
 
     def fetch_daily_prices(self, numpoints=50):
         return self.fetch_latest_prices(numpoints=numpoints, resolution="1D")
@@ -71,16 +97,6 @@ class IGDataLoader:
             return None
 
     def fetch_open_trade_info(self):
-        """
-        Fetch open trade info from IG for this epic.
-        Returns dict:
-            - in_trade: bool
-            - entry_price
-            - stop_level
-            - size
-            - net_change
-            - created_date
-        """
         try:
             positions = self.ig_service.fetch_open_positions()
 

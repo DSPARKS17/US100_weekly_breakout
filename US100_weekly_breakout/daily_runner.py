@@ -19,6 +19,11 @@ from trade_state import load_state, save_state
 FALLBACK_ACCOUNT_VALUE = 13000
 
 
+def to_week_commencing(ts):
+    ts = pd.to_datetime(ts)
+    return (ts - pd.Timedelta(days=ts.weekday())).date()
+
+
 def main():
     try:
         # ---------------------------
@@ -43,12 +48,6 @@ def main():
 
         daily_df = loader.fetch_daily_prices(numpoints=DAILY_BARS)
         weekly_df = loader.fetch_weekly_prices(numpoints=WEEKLY_BARS)
-
-        # ---------------------------
-        # Ensure consistent indexes
-        # ---------------------------
-        daily_df.index = pd.date_range(end=datetime.now(), periods=len(daily_df), freq='B')
-        weekly_df.index = pd.date_range(end=datetime.now(), periods=len(weekly_df), freq='W-FRI')
 
         if len(daily_df) < 120:
             raise ValueError(f"Insufficient daily bars returned: {len(daily_df)}")
@@ -85,18 +84,39 @@ def main():
         # ---------------------------
         # Latest weekly values
         # ---------------------------
-        last_weekly = weekly_df.iloc[-2]
-        prev_weekly = weekly_df.iloc[-3]
+        # Filter only completed weeks (ignore current incomplete week)
+        today = pd.Timestamp.now().normalize()
+        completed_weeks = weekly_df[weekly_df.index < today]
+
+        if len(completed_weeks) < 2:
+            raise ValueError("Not enough completed weekly bars to compute last 2 weeks.")
+
+        last_weekly = completed_weeks.iloc[-1]   # most recent fully closed week
+        prev_weekly = completed_weeks.iloc[-2]   # previous fully closed week
+
         weekly_close_last = float(last_weekly['close'])
         weekly_close_prev = float(prev_weekly['close'])
         weekly_ema50 = float(last_weekly['EMA50'])
         weekly_ema8_last = float(last_weekly['EMA8'])
         weekly_ema8_prev = float(prev_weekly['EMA8'])
 
+        # ---------------------------
+        # Week commencing string for display (final fix)
+        # ---------------------------
+        wc_prev = to_week_commencing(prev_weekly.name)
+        wc_last = to_week_commencing(last_weekly.name)
+        weekly_dates_str = f"wc {wc_prev} / wc {wc_last}"
+
+        # ---------------------------
+        # Weekly trend (reversal logic)
+        # ---------------------------
         weekly_trend_valid, weekly_valid_since = find_weekly_trend_reversal(weekly_df)
-        weekly_trend_str = (
-            f"VALID as of {weekly_valid_since.strftime('%Y-%m-%d')}" if weekly_trend_valid else "INVALID"
-        )
+
+        if weekly_trend_valid and weekly_valid_since is not None:
+            wc_valid_since = to_week_commencing(weekly_valid_since)
+            weekly_trend_str = f"VALID as of wc {wc_valid_since}"
+        else:
+            weekly_trend_str = "INVALID"
 
         # ---------------------------
         # Load trade state
@@ -143,6 +163,7 @@ def main():
         else:
             entry_allowed = should_open_trade(weekly_df, daily_df)
             reentry_allowed = can_reenter(weekly_df, daily_df, big_move_done)
+
             action_msg = (
                 f"Trade Status:\n🔴 NOT IN TRADE\n\n"
                 f"Entry Conditions:\n"
@@ -155,6 +176,9 @@ def main():
                 f"📌 Action:\n➡️ {'Consider OPENING a long position' if entry_allowed else 'Do nothing'}"
             )
 
+        # ---------------------------
+        # Build final message
+        # ---------------------------
         message = "\n".join([
             f"📊 {config.SYMBOL} Daily Strategy Update",
             f"Date: {datetime.now().strftime('%Y-%m-%d')}\n",
@@ -166,7 +190,7 @@ def main():
             f"EMA8: {ema8:.2f}\n",
             "Weekly:",
             f"Close above EMA50: {weekly_close_last:.2f} vs EMA50 {weekly_ema50:.2f}",
-            f"2 consecutive closes above EMA8 ({prev_weekly.name.date()} / {last_weekly.name.date()}): "
+            f"2 consecutive closes above EMA8 ({weekly_dates_str}): "
             f"{weekly_close_prev:.2f} / {weekly_close_last:.2f} vs EMA8: {weekly_ema8_prev:.2f} / {weekly_ema8_last:.2f}\n",
             action_msg
         ])
